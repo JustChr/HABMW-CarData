@@ -31,6 +31,14 @@ from .device_flow import CardataAuthError, poll_for_tokens, request_device_code
 
 DATA_SCHEMA = vol.Schema({vol.Required("client_id"): str})
 
+# Hassfest forbids literal URLs in translation strings, so the BMW portal links
+# used in the onboarding step are injected as description placeholders instead.
+USER_STEP_PLACEHOLDERS = {
+    "portal_url": "https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Technical-registration_Step-1",
+    "portal_uk": "https://www.bmw.co.uk/en-gb/mybmw/vehicle-overview",
+    "portal_de": "https://www.bmw.de/de-de/mybmw/vehicle-overview",
+}
+
 
 def _build_code_verifier() -> str:
     alphabet = string.ascii_letters + string.digits + "-._~"
@@ -58,7 +66,11 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         if user_input is None:
-            return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA)
+            return self.async_show_form(
+                step_id="user",
+                data_schema=DATA_SCHEMA,
+                description_placeholders=dict(USER_STEP_PLACEHOLDERS),
+            )
 
         client_id = user_input["client_id"].strip()
 
@@ -78,7 +90,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="user",
                 data_schema=DATA_SCHEMA,
                 errors={"base": "device_code_failed"},
-                description_placeholders={"error": str(err)},
+                description_placeholders={**USER_STEP_PLACEHOLDERS, "error": str(err)},
             )
 
         return await self.async_step_authorize()

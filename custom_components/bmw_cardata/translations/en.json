@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect BMW CarData",
-        "description": "This streams your BMW or Mini vehicle data into Home Assistant.\n\n**First, set up CarData in the BMW portal** (skip if you already have a Client ID):\n\n1. Open the [BMW CarData portal](https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Technical-registration_Step-1) and sign in. If CarData isn't available in your country, sign in via the [UK](https://www.bmw.co.uk/en-gb/mybmw/vehicle-overview) or [German](https://www.bmw.de/de-de/mybmw/vehicle-overview) portal — the Client ID works everywhere.\n2. Create a **CarData Client** and copy the **Client ID** it shows you.\n3. Subscribe the client to **both** services: **CarData API** and **CarData Streaming**.\n4. Open **Data Selection** and tick the data you want to receive.\n\nThen paste the **Client ID** below.",
+        "description": "This streams your BMW or Mini vehicle data into Home Assistant.\n\n**First, set up CarData in the BMW portal** (skip if you already have a Client ID):\n\n1. Open the [BMW CarData portal]({portal_url}) and sign in. If CarData isn't available in your country, sign in via the [UK]({portal_uk}) or [German]({portal_de}) portal — the Client ID works everywhere.\n2. Create a **CarData Client** and copy the **Client ID** it shows you.\n3. Subscribe the client to **both** services: **CarData API** and **CarData Streaming**.\n4. Open **Data Selection** and tick the data you want to receive.\n\nThen paste the **Client ID** below.",
         "data": {
           "client_id": "Client ID"
         },
