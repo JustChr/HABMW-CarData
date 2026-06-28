@@ -5,7 +5,6 @@
     "@JustChr"
   ],
   "config_flow": true,
-  "options_flow": true,
   "documentation": "https://github.com/JustChr/HABMW-CarData",
   "issue_tracker": "https://github.com/JustChr/HABMW-CarData/issues",
   "iot_class": "cloud_push",
