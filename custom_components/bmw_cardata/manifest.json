@@ -6,14 +6,14 @@
   ],
   "config_flow": true,
   "documentation": "https://github.com/JustChr/HABMW-CarData",
-  "issue_tracker": "https://github.com/JustChr/HABMW-CarData/issues",
+  "integration_type": "device",
   "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/JustChr/HABMW-CarData/issues",
   "loggers": [
     "paho"
   ],
   "requirements": [
     "paho-mqtt>=1.6.1"
   ],
-  "version": "0.3.0",
-  "integration_type": "device"
+  "version": "0.3.0"
 }
