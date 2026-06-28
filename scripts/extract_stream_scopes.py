@@ -24,7 +24,12 @@ def extract_descriptors(text: str) -> Iterable[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate streaming scopes from catalogue")
-    parser.add_argument("catalogue", default="catalogue", nargs="?", help="Path to catalogue file")
+    parser.add_argument(
+        "catalogue",
+        default="docs/reference/telematics-data-catalogue.txt",
+        nargs="?",
+        help="Path to catalogue file",
+    )
     parser.add_argument("--prefix", default=DEFAULT_PREFIX, help="Scope prefix (default cardata:streaming:)")
     parser.add_argument("--output", help="Optional output file; writes to stdout if omitted")
     args = parser.parse_args()

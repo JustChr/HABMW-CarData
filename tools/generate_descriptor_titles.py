@@ -10,8 +10,8 @@ from pathlib import Path
 from textwrap import indent
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CATALOGUE_FILE = REPO_ROOT / "catalogue"
-OUTPUT_FILE = REPO_ROOT / "custom_components" / "cardata" / "descriptor_titles.py"
+CATALOGUE_FILE = REPO_ROOT / "docs" / "reference" / "telematics-data-catalogue.txt"
+OUTPUT_FILE = REPO_ROOT / "custom_components" / "bmw_cardata" / "descriptor_titles.py"
 
 HEADERS = {
     "CarData Element",

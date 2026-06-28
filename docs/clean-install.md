@@ -1,6 +1,6 @@
-# Cardata Integration Residual Artifacts
+# Clean install — BMW CarData (HA) residual artifacts
 
-This note documents every file, registry entry, and flag the BMW Cardata integration can create. Use it when you want to fully clean your Home Assistant instance before testing a fresh install.
+This note documents every file, registry entry, and flag the BMW CarData integration can create. Use it when you want to fully clean your Home Assistant instance before testing a fresh install.
 
 ## Config Entry Data
 
