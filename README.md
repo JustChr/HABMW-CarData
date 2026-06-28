@@ -86,18 +86,19 @@ and configuration are shared across all of them.
 ## Configuration
 
 1. **Settings → Devices & Services → Add Integration → BMW CarData (HA)**.
-2. Enter your **client ID**.
-3. The flow shows a `verification_url` and `user_code`. Open the link, enter the
-   code, and approve the device on BMW's site.
-4. **Only after BMW confirms the approval**, return to HA and click Submit.
-   Submitting early leaves the flow stuck until the device-code exchange times
-   out — cancel and start over if that happens.
-5. Wait for the car to send data; triggering an action in the MyBMW app
+2. The first screen walks you through the BMW portal setup and asks for your
+   **client ID**.
+3. Home Assistant then shows an **authorization link** and a code. Open the
+   link, sign in, and approve the device on BMW's site. The dialog waits and
+   **continues automatically** the moment you approve — there's nothing to click
+   in HA, and nothing to time. If approval times out or is declined, press
+   **Submit** to get a fresh code and retry.
+4. Wait for the car to send data; triggering an action in the MyBMW app
    (lock/unlock) usually produces an update immediately.
 
-If BMW later rejects the token, use **Configure → Start Device Authorization
-Again**. Removing and re-adding the integration with the same client ID also
-works — the old entry is deleted automatically.
+If BMW later rejects the token, use **Configure → Re-authorize with BMW**.
+Removing and re-adding the integration with the same client ID also works — the
+old entry is deleted automatically.
 
 > Moving from the original `cardata` integration? Entity IDs changed with the
 > rebrand. Remove the old install first — see [docs/clean-install.md](docs/clean-install.md).

@@ -40,7 +40,7 @@ else
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
-manifest_file="$repo_root/custom_components/cardata/manifest.json"
+manifest_file="$repo_root/custom_components/bmw_cardata/manifest.json"
 
 if [[ ! -f "$manifest_file" ]]; then
   echo "manifest.json not found at $manifest_file" >&2

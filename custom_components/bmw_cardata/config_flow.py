@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import secrets
@@ -52,6 +53,8 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._code_verifier: Optional[str] = None
         self._token_data: Optional[Dict[str, Any]] = None
         self._reauth_entry: Optional[config_entries.ConfigEntry] = None
+        self._poll_task: Optional[asyncio.Task] = None
+        self._auth_error: Optional[str] = None
 
     async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         if user_input is None:
@@ -91,10 +94,27 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 code_challenge=_generate_code_challenge(self._code_verifier),
             )
 
-    async def async_step_authorize(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def _async_poll_for_tokens(self) -> Dict[str, Any]:
+        """Background task: poll BMW until the user approves the device."""
+
         assert self._client_id is not None
         assert self._device_data is not None
         assert self._code_verifier is not None
+
+        device_code = self._device_data["device_code"]
+        interval = int(self._device_data.get("interval", 5))
+        async with aiohttp.ClientSession() as session:
+            return await poll_for_tokens(
+                session,
+                client_id=self._client_id,
+                device_code=device_code,
+                code_verifier=self._code_verifier,
+                interval=interval,
+                timeout=int(self._device_data.get("expires_in", 600)),
+            )
+
+    async def async_step_authorize(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        assert self._device_data is not None
 
         placeholders = {
             "verification_url": self._device_data.get("verification_uri_complete")
@@ -102,38 +122,61 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "user_code": self._device_data.get("user_code", ""),
         }
 
-        if user_input is None:
-            return self.async_show_form(
+        # Kick off the device-code polling in the background. Home Assistant shows a
+        # progress dialog and re-enters this step when the task finishes, so the user
+        # never has to time a "Submit" click — the flow advances the moment they
+        # approve the device on BMW's site.
+        if self._poll_task is None:
+            self._poll_task = self.hass.async_create_task(self._async_poll_for_tokens())
+
+        if not self._poll_task.done():
+            return self.async_show_progress(
                 step_id="authorize",
-                data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
+                progress_action="wait_for_authorization",
                 description_placeholders=placeholders,
+                progress_task=self._poll_task,
             )
 
-        device_code = self._device_data["device_code"]
-        interval = int(self._device_data.get("interval", 5))
+        try:
+            self._token_data = self._poll_task.result()
+        except CardataAuthError as err:
+            LOGGER.warning("BMW authorization failed: %s", err)
+            self._auth_error = str(err)
+            self._poll_task = None
+            return self.async_show_progress_done(next_step_id="authorize_failed")
 
-        async with aiohttp.ClientSession() as session:
-            try:
-                token_data = await poll_for_tokens(
-                    session,
-                    client_id=self._client_id,
-                    device_code=device_code,
-                    code_verifier=self._code_verifier,
-                    interval=interval,
-                    timeout=int(self._device_data.get("expires_in", 600)),
-                )
-            except CardataAuthError as err:
-                LOGGER.warning("BMW authorization pending/failed: %s", err)
-                return self.async_show_form(
-                    step_id="authorize",
-                    data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
-                    errors={"base": "authorization_failed"},
-                    description_placeholders={"error": str(err), **placeholders},
-                )
+        token_data = self._token_data or {}
+        LOGGER.debug(
+            "Received token: scope=%s id_token_length=%s",
+            token_data.get("scope"),
+            len(token_data.get("id_token") or ""),
+        )
+        self._poll_task = None
+        return self.async_show_progress_done(next_step_id="tokens")
 
-        self._token_data = token_data
-        LOGGER.debug("Received token: scope=%s id_token_length=%s", token_data.get("scope"), len(token_data.get("id_token") or ""))
-        return await self.async_step_tokens()
+    async def async_step_authorize_failed(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Show why authorization failed and let the user retry with a fresh code."""
+
+        if user_input is None:
+            return self.async_show_form(
+                step_id="authorize_failed",
+                data_schema=vol.Schema({}),
+                description_placeholders={"error": self._auth_error or ""},
+            )
+
+        # Retry: request a brand-new device/user code and restart the wait.
+        try:
+            await self._request_device_code()
+        except CardataAuthError as err:
+            return self.async_show_form(
+                step_id="authorize_failed",
+                data_schema=vol.Schema({}),
+                errors={"base": "device_code_failed"},
+                description_placeholders={"error": str(err)},
+            )
+        return await self.async_step_authorize()
 
     async def async_step_tokens(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         assert self._client_id is not None
@@ -220,24 +263,28 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         self._reauth_client_id: Optional[str] = None
 
     async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        # Labels/descriptions come from translations (options.step.init.menu_options),
+        # so the menu is localizable and stays in sync with each action step.
         return self.async_show_menu(
             step_id="init",
-            menu_options={
-                "action_refresh_tokens": "Refresh tokens",
-                "action_reauth": "Start device authorization again",
-                "action_fetch_mappings": "Initiate vehicles (API)",
-                "action_fetch_basic": "Get basic vehicle information (API)",
-                "action_fetch_telematic": "Get telematics data (API)",
-                "action_fetch_charging_history": "Get charging history (API)",
-                "action_fetch_tyre": "Get tyre diagnosis (API)",
-                "action_fetch_location_charging": "Get location-based charging settings (API)",
-                "action_fetch_image": "Get vehicle image (API)",
-                "action_reset_container": "Reset telemetry container",
-            },
+            menu_options=[
+                "action_refresh_tokens",
+                "action_reauth",
+                "action_reset_container",
+                "action_fetch_mappings",
+                "action_fetch_basic",
+                "action_fetch_telematic",
+                "action_fetch_charging_history",
+                "action_fetch_tyre",
+                "action_fetch_location_charging",
+                "action_fetch_image",
+            ],
         )
 
     def _confirm_schema(self) -> vol.Schema:
-        return vol.Schema({vol.Required("confirm", default=False): bool})
+        # An empty schema renders as a plain confirmation dialog: pressing "Submit"
+        # confirms the action. No checkbox to tick first.
+        return vol.Schema({})
 
     def _show_confirm(
         self,
@@ -259,14 +306,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_action_refresh_tokens(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        description = "Refresh stored tokens now?"
         if user_input is None:
             return self._show_confirm(step_id="action_refresh_tokens")
-        if not user_input.get("confirm"):
-            return self._show_confirm(
-                step_id="action_refresh_tokens",
-                errors={"confirm": "confirm"},
-            )
         try:
             await async_manual_refresh_tokens(self.hass, self._config_entry)
         except CardataAuthError as err:
@@ -288,7 +329,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         schema = vol.Schema(
             {
                 vol.Required("client_id", default=current_client_id): str,
-                vol.Required("confirm", default=False): bool,
             }
         )
         if user_input is None:
@@ -298,16 +338,11 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             client_id = client_id.strip()
         else:
             client_id = ""
-        errors: Dict[str, str] = {}
         if not client_id:
-            errors["client_id"] = "invalid_client_id"
-        if not user_input.get("confirm"):
-            errors["confirm"] = "confirm"
-        if errors:
             return self.async_show_form(
                 step_id="action_reauth",
                 data_schema=schema,
-                errors=errors,
+                errors={"client_id": "invalid_client_id"},
             )
         self._reauth_client_id = client_id
         return await self._handle_reauth()
@@ -315,7 +350,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_action_fetch_mappings(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        description = "Call the vehicles mapping API now?"
         runtime = self._get_runtime()
         if runtime is None:
             return self._show_confirm(
@@ -324,11 +358,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
         if user_input is None:
             return self._show_confirm(step_id="action_fetch_mappings")
-        if not user_input.get("confirm"):
-            return self._show_confirm(
-                step_id="action_fetch_mappings",
-                errors={"confirm": "confirm"},
-            )
         await self.hass.services.async_call(
             DOMAIN,
             "fetch_vehicle_mappings",
@@ -352,7 +381,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_action_fetch_basic(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        description = "Call the basic vehicle information API for all known VINs?"
         runtime = self._get_runtime()
         if runtime is None:
             return self._show_confirm(
@@ -367,11 +395,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
         if user_input is None:
             return self._show_confirm(step_id="action_fetch_basic")
-        if not user_input.get("confirm"):
-            return self._show_confirm(
-                step_id="action_fetch_basic",
-                errors={"confirm": "confirm"},
-            )
         for vin in sorted(vins):
             await self.hass.services.async_call(
                 DOMAIN,
@@ -384,7 +407,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_action_fetch_telematic(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        description = "Call the telematics API now?"
         runtime = self._get_runtime()
         if runtime is None:
             return self._show_confirm(
@@ -393,11 +415,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
         if user_input is None:
             return self._show_confirm(step_id="action_fetch_telematic")
-        if not user_input.get("confirm"):
-            return self._show_confirm(
-                step_id="action_fetch_telematic",
-                errors={"confirm": "confirm"},
-            )
         await self.hass.services.async_call(
             DOMAIN,
             "fetch_telematic_data",
@@ -416,8 +433,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             return self._show_confirm(step_id=step_id, errors={"base": "runtime_missing"})
         if user_input is None:
             return self._show_confirm(step_id=step_id)
-        if not user_input.get("confirm"):
-            return self._show_confirm(step_id=step_id, errors={"confirm": "confirm"})
         await self.hass.services.async_call(
             DOMAIN,
             service,
@@ -465,10 +480,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_action_reset_container(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        description = (
-            "Delete existing BMW CarData telemetry containers created by the integration "
-            "and recreate a fresh one?"
-        )
         runtime = self._get_runtime()
         if runtime is None:
             return self._show_confirm(
@@ -477,11 +488,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
         if user_input is None:
             return self._show_confirm(step_id="action_reset_container")
-        if not user_input.get("confirm"):
-            return self._show_confirm(
-                step_id="action_reset_container",
-                errors={"confirm": "confirm"},
-            )
 
         entry = self.hass.config_entries.async_get_entry(self._config_entry.entry_id)
         if entry is None:
