@@ -1,6 +1,6 @@
 """Constants for the BMW CarData integration."""
 
-DOMAIN = "cardata"
+DOMAIN = "bmw_cardata"
 DEFAULT_SCOPE = "authenticate_user openid cardata:api:read cardata:streaming:read"
 DEVICE_CODE_URL = "https://customer.bmwgroup.com/gcdm/oauth/device/code"
 TOKEN_URL = "https://customer.bmwgroup.com/gcdm/oauth/token"
@@ -11,7 +11,7 @@ DEFAULT_STREAM_HOST = "customer.streaming-cardata.bmwgroup.com"
 DEFAULT_STREAM_PORT = 9000
 DEFAULT_REFRESH_INTERVAL = 45 * 60  #How often to refresh the auth tokens in seconds
 MQTT_KEEPALIVE = 30
-DEBUG_LOG = True
+DEBUG_LOG = False
 DIAGNOSTIC_LOG_INTERVAL = 30 # How often we print stream logs in seconds
 BOOTSTRAP_COMPLETE = "bootstrap_complete"
 REQUEST_LOG = "request_log"
@@ -24,7 +24,7 @@ OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"
 OPTION_DIAGNOSTIC_INTERVAL = "diagnostic_log_interval"
 
-HV_BATTERY_CONTAINER_NAME = "BimmerData HV Battery"
+HV_BATTERY_CONTAINER_NAME = "BMW CarData HV Battery"
 HV_BATTERY_CONTAINER_PURPOSE = "High voltage battery telemetry"
 HV_BATTERY_DESCRIPTORS = [
     # Current high-voltage battery state of charge

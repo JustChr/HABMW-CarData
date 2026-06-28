@@ -17,12 +17,12 @@ Removing the integration deletes the config entry, but the related devices/entit
 
 ## .storage Files
 
-- `custom_components.cardata_<entry_id>_request_log`: rolling API quota log written via `homeassistant.helpers.storage.Store`. These JSON files are left behind unless you delete them manually.
+- `bmw_cardata_<entry_id>_request_log`: rolling API quota log written via `homeassistant.helpers.storage.Store`. These JSON files are left behind unless you delete them manually. (Installs migrated from the original `cardata` integration may also leave a `cardata_<entry_id>_request_log` file behind.)
 
 ## Device Registry
 
-- One integration-level device: `("cardata", <entry_id>)` named "CarData Debug Device".
-- One device per VIN: `("cardata", <vin>)` populated with metadata from basic vehicle data or stream payloads.
+- One integration-level device: `("bmw_cardata", <entry_id>)` named "CarData Debug Device".
+- One device per VIN: `("bmw_cardata", <vin>)` populated with metadata from basic vehicle data or stream payloads.
 
 Delete both from *Settings → Devices & Services → Devices* if you want a clean slate.
 
@@ -39,8 +39,8 @@ Disable or remove these from *Settings → Devices & Services → Entities* as n
 
 ## Services & Notifications
 
-- Services registered while any entry is loaded: `cardata.fetch_telematic_data`, `cardata.fetch_vehicle_mappings`, `cardata.fetch_basic_data`. They vanish automatically once the last entry unloads.
-- Reauthentication failures raise a persistent notification with id `cardata_reauth_<entry_id>` that must be dismissed manually if still visible.
+- Services registered while any entry is loaded: `bmw_cardata.fetch_telematic_data`, `bmw_cardata.fetch_vehicle_mappings`, `bmw_cardata.fetch_basic_data`, `bmw_cardata.fetch_charging_history`, `bmw_cardata.fetch_tyre_diagnosis`, `bmw_cardata.fetch_location_charging_settings`, `bmw_cardata.fetch_vehicle_image`. They vanish automatically once the last entry unloads.
+- Reauthentication failures raise a persistent notification with id `bmw_cardata_reauth_<entry_id>` that must be dismissed manually if still visible.
 
 ## Runtime Cache
 

@@ -6,7 +6,7 @@ import logging
 
 from .const import DEBUG_LOG
 
-_LOGGER_NAMESPACE = "custom_components.cardata"
+_LOGGER_NAMESPACE = "custom_components.bmw_cardata"
 _DEBUG_ENABLED = DEBUG_LOG
 
 

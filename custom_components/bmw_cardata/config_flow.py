@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import secrets
@@ -17,7 +16,7 @@ import logging
 
 from homeassistant import config_entries
 from homeassistant.components import persistent_notification
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
 from . import async_manual_refresh_tokens
@@ -52,7 +51,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._device_data: Optional[Dict[str, Any]] = None
         self._code_verifier: Optional[str] = None
         self._token_data: Optional[Dict[str, Any]] = None
-        self._reauth_entry: Optional[ConfigEntry] = None
+        self._reauth_entry: Optional[config_entries.ConfigEntry] = None
 
     async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         if user_input is None:
@@ -177,7 +176,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             persistent_notification.async_dismiss(self.hass, notification_id)
             return self.async_abort(reason="reauth_successful")
 
-        friendly_title = f"BimmerData Streamline ({self._client_id[:8]})"
+        friendly_title = f"BMW CarData (HA) ({self._client_id[:8]})"
         return self.async_create_entry(title=friendly_title, data=entry_data)
 
     async def async_step_reauth(self, entry_data: Dict[str, Any]) -> FlowResult:
@@ -229,6 +228,10 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 "action_fetch_mappings": "Initiate vehicles (API)",
                 "action_fetch_basic": "Get basic vehicle information (API)",
                 "action_fetch_telematic": "Get telematics data (API)",
+                "action_fetch_charging_history": "Get charging history (API)",
+                "action_fetch_tyre": "Get tyre diagnosis (API)",
+                "action_fetch_location_charging": "Get location-based charging settings (API)",
+                "action_fetch_image": "Get vehicle image (API)",
                 "action_reset_container": "Reset telemetry container",
             },
         )
@@ -402,6 +405,62 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             blocking=True,
         )
         return self.async_create_entry(title="", data={})
+
+    async def _run_simple_service(
+        self, *, step_id: str, service: str, user_input: Optional[Dict[str, Any]]
+    ) -> FlowResult:
+        """Confirm-then-call helper for read-only VIN-scoped API services."""
+
+        runtime = self._get_runtime()
+        if runtime is None:
+            return self._show_confirm(step_id=step_id, errors={"base": "runtime_missing"})
+        if user_input is None:
+            return self._show_confirm(step_id=step_id)
+        if not user_input.get("confirm"):
+            return self._show_confirm(step_id=step_id, errors={"confirm": "confirm"})
+        await self.hass.services.async_call(
+            DOMAIN,
+            service,
+            {"entry_id": self._config_entry.entry_id},
+            blocking=True,
+        )
+        return self.async_create_entry(title="", data={})
+
+    async def async_step_action_fetch_charging_history(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        return await self._run_simple_service(
+            step_id="action_fetch_charging_history",
+            service="fetch_charging_history",
+            user_input=user_input,
+        )
+
+    async def async_step_action_fetch_tyre(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        return await self._run_simple_service(
+            step_id="action_fetch_tyre",
+            service="fetch_tyre_diagnosis",
+            user_input=user_input,
+        )
+
+    async def async_step_action_fetch_location_charging(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        return await self._run_simple_service(
+            step_id="action_fetch_location_charging",
+            service="fetch_location_charging_settings",
+            user_input=user_input,
+        )
+
+    async def async_step_action_fetch_image(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        return await self._run_simple_service(
+            step_id="action_fetch_image",
+            service="fetch_vehicle_image",
+            user_input=user_input,
+        )
 
     async def async_step_action_reset_container(
         self, user_input: Optional[Dict[str, Any]] = None

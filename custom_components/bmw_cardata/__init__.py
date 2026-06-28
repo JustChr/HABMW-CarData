@@ -50,6 +50,13 @@ from .const import (
     DEBUG_LOG,
 )
 from .device_flow import CardataAuthError, refresh_tokens
+from .api import (
+    CardataApiError,
+    async_get_charging_history,
+    async_get_location_based_charging_settings,
+    async_get_tyre_diagnosis,
+    async_get_vehicle_image,
+)
 from .container import CardataContainerError, CardataContainerManager
 from .stream import CardataStreamManager
 from .coordinator import CardataCoordinator
@@ -178,7 +185,7 @@ class QuotaManager:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     domain_data = hass.data.setdefault(DOMAIN, {})
 
-    _LOGGER.debug("Setting up BimmerData Streamline entry %s", entry.entry_id)
+    _LOGGER.debug("Setting up BMW CarData entry %s", entry.entry_id)
 
     session = aiohttp.ClientSession()
 
@@ -423,7 +430,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         payload = json.loads(text)
                     except json.JSONDecodeError:
                         payload = text
-                    _LOGGER.info("Cardata vehicle mappings: %s", payload)
+                    count = len(payload) if isinstance(payload, (list, dict)) else 0
+                    _LOGGER.info("Fetched %s vehicle mapping(s)", count)
+                    _LOGGER.debug("Cardata vehicle mappings: %s", payload)
             except aiohttp.ClientError as err:
                 _LOGGER.error(
                     "Cardata fetch_vehicle_mappings: network error: %s",
@@ -500,7 +509,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         payload = json.loads(text)
                     except json.JSONDecodeError:
                         payload = text
-                    _LOGGER.info("Cardata basic data for %s: %s", vin, payload)
+                    _LOGGER.info("Fetched basic vehicle data for %s", vin)
+                    _LOGGER.debug("Cardata basic data for %s: %s", vin, payload)
                     if isinstance(payload, dict):
                         metadata = runtime.coordinator.apply_basic_data(vin, payload)
                         if metadata:
@@ -528,6 +538,147 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     err,
                 )
 
+        async def _prepare_api_call(
+            call, label: str, *, require_vin: bool
+        ) -> tuple[ConfigEntry, "CardataRuntimeData", Optional[str], str] | None:
+            """Resolve target, refresh tokens, claim quota and return call context.
+
+            Shared by the read-only CarData API services. Returns
+            ``(entry, runtime, vin, access_token)`` or ``None`` if the call cannot
+            proceed (already logged).
+            """
+
+            resolved = _resolve_target(call)
+            if not resolved:
+                return None
+            target_entry_id, target_entry, runtime = resolved
+
+            vin = call.data.get("vin") or target_entry.data.get("vin")
+            if vin is None and runtime.coordinator.data:
+                vin = next(iter(runtime.coordinator.data))
+            if require_vin and not vin:
+                _LOGGER.error("Cardata %s: no VIN available; provide vin parameter", label)
+                return None
+
+            try:
+                await _refresh_tokens(
+                    target_entry,
+                    runtime.session,
+                    runtime.stream,
+                    runtime.container_manager,
+                )
+            except CardataAuthError as err:
+                _LOGGER.error(
+                    "Cardata %s: token refresh failed for entry %s: %s",
+                    label,
+                    target_entry_id,
+                    err,
+                )
+                return None
+
+            access_token = target_entry.data.get("access_token")
+            if not access_token:
+                _LOGGER.error("Cardata %s: access token missing after refresh", label)
+                return None
+
+            quota = runtime.quota_manager
+            if quota:
+                try:
+                    await quota.async_claim()
+                except CardataQuotaError as err:
+                    _LOGGER.warning("Cardata %s blocked: %s", label, err)
+                    return None
+
+            return target_entry, runtime, vin, access_token
+
+        async def async_handle_fetch_charging_history(call) -> None:
+            prepared = await _prepare_api_call(
+                call, "fetch_charging_history", require_vin=True
+            )
+            if not prepared:
+                return
+            _entry, runtime, vin, access_token = prepared
+            try:
+                payload = await async_get_charging_history(
+                    runtime.session,
+                    access_token,
+                    vin,
+                    from_date=call.data.get("from"),
+                    to_date=call.data.get("to"),
+                )
+            except CardataApiError as err:
+                _LOGGER.error("Cardata fetch_charging_history failed for %s: %s", vin, err)
+                return
+            sessions = payload.get("data") if isinstance(payload, dict) else None
+            _LOGGER.info(
+                "Fetched charging history for %s (%s session(s))",
+                vin,
+                len(sessions) if isinstance(sessions, list) else 0,
+            )
+            _LOGGER.debug("Cardata charging history for %s: %s", vin, payload)
+
+        async def async_handle_fetch_tyre_diagnosis(call) -> None:
+            prepared = await _prepare_api_call(
+                call, "fetch_tyre_diagnosis", require_vin=True
+            )
+            if not prepared:
+                return
+            _entry, runtime, vin, access_token = prepared
+            try:
+                payload = await async_get_tyre_diagnosis(runtime.session, access_token, vin)
+            except CardataApiError as err:
+                _LOGGER.error("Cardata fetch_tyre_diagnosis failed for %s: %s", vin, err)
+                return
+            _LOGGER.info("Fetched tyre diagnosis for %s", vin)
+            _LOGGER.debug("Cardata tyre diagnosis for %s: %s", vin, payload)
+
+        async def async_handle_fetch_location_charging(call) -> None:
+            prepared = await _prepare_api_call(
+                call, "fetch_location_charging_settings", require_vin=True
+            )
+            if not prepared:
+                return
+            _entry, runtime, vin, access_token = prepared
+            try:
+                payload = await async_get_location_based_charging_settings(
+                    runtime.session, access_token, vin
+                )
+            except CardataApiError as err:
+                _LOGGER.error(
+                    "Cardata fetch_location_charging_settings failed for %s: %s", vin, err
+                )
+                return
+            settings = payload.get("data") if isinstance(payload, dict) else None
+            _LOGGER.info(
+                "Fetched location-based charging settings for %s (%s entr(y/ies))",
+                vin,
+                len(settings) if isinstance(settings, list) else 0,
+            )
+            _LOGGER.debug(
+                "Cardata location-based charging settings for %s: %s", vin, payload
+            )
+
+        async def async_handle_fetch_vehicle_image(call) -> None:
+            prepared = await _prepare_api_call(
+                call, "fetch_vehicle_image", require_vin=True
+            )
+            if not prepared:
+                return
+            _entry, runtime, vin, access_token = prepared
+            try:
+                image_bytes, content_type = await async_get_vehicle_image(
+                    runtime.session, access_token, vin
+                )
+            except CardataApiError as err:
+                _LOGGER.error("Cardata fetch_vehicle_image failed for %s: %s", vin, err)
+                return
+            _LOGGER.info(
+                "Fetched vehicle image for %s (%s bytes, %s)",
+                vin,
+                len(image_bytes),
+                content_type or "unknown type",
+            )
+
         telematic_service_schema = vol.Schema(
             {
                 vol.Optional("entry_id"): str,
@@ -539,6 +690,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             {
                 vol.Optional("entry_id"): str,
                 vol.Optional("vin"): str,
+            }
+        )
+        vin_service_schema = vol.Schema(
+            {
+                vol.Optional("entry_id"): str,
+                vol.Optional("vin"): str,
+            }
+        )
+        charging_history_schema = vol.Schema(
+            {
+                vol.Optional("entry_id"): str,
+                vol.Optional("vin"): str,
+                vol.Optional("from"): str,
+                vol.Optional("to"): str,
             }
         )
 
@@ -560,9 +725,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             async_handle_fetch_basic_data,
             schema=basic_data_service_schema,
         )
+        hass.services.async_register(
+            DOMAIN,
+            "fetch_charging_history",
+            async_handle_fetch_charging_history,
+            schema=charging_history_schema,
+        )
+        hass.services.async_register(
+            DOMAIN,
+            "fetch_tyre_diagnosis",
+            async_handle_fetch_tyre_diagnosis,
+            schema=vin_service_schema,
+        )
+        hass.services.async_register(
+            DOMAIN,
+            "fetch_location_charging_settings",
+            async_handle_fetch_location_charging,
+            schema=vin_service_schema,
+        )
+        hass.services.async_register(
+            DOMAIN,
+            "fetch_vehicle_image",
+            async_handle_fetch_vehicle_image,
+            schema=vin_service_schema,
+        )
         registered_services = domain_data.setdefault("_registered_services", set())
         registered_services.update(
-            {"fetch_telematic_data", "fetch_vehicle_mappings", "fetch_basic_data"}
+            {
+                "fetch_telematic_data",
+                "fetch_vehicle_mappings",
+                "fetch_basic_data",
+                "fetch_charging_history",
+                "fetch_tyre_diagnosis",
+                "fetch_location_charging_settings",
+                "fetch_vehicle_image",
+            }
         )
         domain_data["_service_registered"] = True
 
@@ -678,7 +875,7 @@ async def _handle_stream_error(hass: HomeAssistant, entry: ConfigEntry, reason: 
         persistent_notification.async_create(
             hass,
             "Authorization failed for BMW CarData. Please reauthorize the integration.",
-            title="BimmerData Streamline",
+            title="BMW CarData (HA)",
             notification_id=notification_id,
         )
         flow_result = await hass.config_entries.flow.async_init(
@@ -1215,7 +1412,8 @@ async def _async_perform_telematic_fetch(
                 payload = json.loads(text)
             except json.JSONDecodeError:
                 payload = text
-            _LOGGER.info("Cardata telematic data for %s: %s", vin, payload)
+            _LOGGER.info("Fetched telematic data for %s", vin)
+            _LOGGER.debug("Cardata telematic data for %s: %s", vin, payload)
             telematic_payload = None
             if isinstance(payload, dict):
                 telematic_payload = payload.get("telematicData") or payload.get("data")

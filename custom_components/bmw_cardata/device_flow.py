@@ -15,6 +15,25 @@ class CardataAuthError(Exception):
     """Raised when the BMW OAuth service rejects a request."""
 
 
+# Network timeout for individual OAuth requests. A single poll/refresh must never
+# hang the event loop indefinitely.
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+
+def _safe_error(status: int, data: Any) -> str:
+    """Build an error string without leaking tokens from the response body.
+
+    Successful (200) responses carry access/refresh/id tokens. Only the OAuth
+    error fields are safe to surface in exceptions/logs.
+    """
+
+    if isinstance(data, dict):
+        detail = data.get("error_description") or data.get("error") or "unknown_error"
+    else:
+        detail = "non-JSON response"
+    return f"{status}: {detail}"
+
+
 async def request_device_code(
     session: aiohttp.ClientSession,
     *,
@@ -32,11 +51,13 @@ async def request_device_code(
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
     }
-    async with session.post(DEVICE_CODE_URL, data=data) as resp:
+    async with session.post(DEVICE_CODE_URL, data=data, timeout=HTTP_TIMEOUT) as resp:
+        payload = await resp.json(content_type=None)
         if resp.status != 200:
-            text = await resp.text()
-            raise CardataAuthError(f"Device code request failed ({resp.status}): {text}")
-        return await resp.json()
+            raise CardataAuthError(
+                f"Device code request failed ({_safe_error(resp.status, payload)})"
+            )
+        return payload
 
 
 async def poll_for_tokens(
@@ -63,17 +84,19 @@ async def poll_for_tokens(
         if time.monotonic() - start > timeout:
             raise CardataAuthError("Timed out waiting for device authorization")
 
-        async with session.post(token_url, data=payload) as resp:
+        async with session.post(token_url, data=payload, timeout=HTTP_TIMEOUT) as resp:
             data = await resp.json(content_type=None)
             if resp.status == 200:
                 return data
 
-            error = data.get("error")
+            error = data.get("error") if isinstance(data, dict) else None
             if error in {"authorization_pending", "slow_down"}:
                 await asyncio.sleep(interval if error == "authorization_pending" else interval + 5)
                 continue
 
-            raise CardataAuthError(f"Token polling failed ({resp.status}): {data}")
+            raise CardataAuthError(
+                f"Token polling failed ({_safe_error(resp.status, data)})"
+            )
 
 
 async def refresh_tokens(
@@ -94,8 +117,10 @@ async def refresh_tokens(
     if scope:
         payload["scope"] = scope
 
-    async with session.post(token_url, data=payload) as resp:
+    async with session.post(token_url, data=payload, timeout=HTTP_TIMEOUT) as resp:
         data = await resp.json(content_type=None)
         if resp.status != 200:
-            raise CardataAuthError(f"Token refresh failed ({resp.status}): {data}")
+            raise CardataAuthError(
+                f"Token refresh failed ({_safe_error(resp.status, data)})"
+            )
         return data

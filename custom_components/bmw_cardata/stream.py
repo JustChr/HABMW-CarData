@@ -13,7 +13,6 @@ import paho.mqtt.client as mqtt
 
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
 from .debug import debug_enabled
 
 _LOGGER = logging.getLogger(__name__)
@@ -130,6 +129,9 @@ class CardataStreamManager:
     def debug_info(self) -> dict[str, str | int | bool]:
         """Return connection parameters for diagnostics."""
 
+        # NOTE: never expose the id_token here. This dict is surfaced as
+        # Home Assistant entity attributes (see CardataDiagnosticsSensor), so any
+        # secret placed here becomes readable from the UI/state machine.
         return {
             "client_id": self._client_id,
             "gcid": self._gcid,
@@ -139,7 +141,7 @@ class CardataStreamManager:
             "topic": f"{self._gcid}/+",
             "clean_session": True,
             "protocol": "MQTTv311",
-            "id_token": self._password,
+            "id_token_present": bool(self._password),
         }
 
     def _start_client(self) -> None:

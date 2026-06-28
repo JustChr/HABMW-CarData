@@ -1,0 +1,25 @@
+BMW CarData (HA)
+================
+
+This project is a fork and continuation of:
+
+    bmw-cardata-ha (originally published as "BimmerData Streamline")
+    Author:  JjyKsi
+    Source:  https://github.com/JjyKsi/bmw-cardata-ha
+
+The original author released that work into the public domain, stating in the
+project README: "This project is released into the public domain. Do whatever
+you want with it ... No attribution required (though appreciated)."
+
+Because the original work carries no licensing restrictions, this fork is
+distributed under the MIT License (see the LICENSE file). We nonetheless credit
+the original author here, as a matter of courtesy and respect for their work.
+
+Changes in this fork include a rebrand to "BMW CarData (HA)" (domain
+`bmw_cardata`), alignment with the published BMW CarData API specification,
+additional API endpoints, and a security and code-quality review.
+
+Trademark note: "BMW", "Mini", "Rolls-Royce" and "CarData" are trademarks of
+their respective owners. This project is an independent, community-built Home
+Assistant integration and is not affiliated with, endorsed by, or sponsored by
+BMW Group.

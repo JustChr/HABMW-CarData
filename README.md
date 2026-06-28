@@ -1,8 +1,15 @@
 <p align="center">
-  <img src="logo.png" alt="BimmerData Streamline logo" width="240" />
+  <img src="logo.png" alt="BMW CarData (HA) logo" width="240" />
 </p>
 
-# BimmerData Streamline (BMW CarData for Home Assistant)
+# BMW CarData (HA)
+
+> A Home Assistant integration for the BMW CarData stream + REST API.
+>
+> **Credit:** This project is a fork and continuation of the public-domain
+> [`bmw-cardata-ha`](https://github.com/JjyKsi/bmw-cardata-ha) (originally
+> "BimmerData Streamline") by **JjyKsi**. Huge thanks to the original author —
+> see [`NOTICE`](NOTICE) for details.
 
 ## This is experimental. 
 I'm developing this on my free time with personal use cases as highest priority. Main goal was to get it running ASAP when BMW killed the old API, so the code quality wasn't priority at all. So far the plugin has been surprisingly stable even after bigger (AI Agent assisted) edits, but there's always a risk that something falls through, due to nonexistent automatic testing and me not doing a completely fresh install every time I test a new feature.
@@ -11,10 +18,17 @@ I'm developing this on my free time with personal use cases as highest priority.
 The Beta branch is used as a day to day development branch and can contain completely broken stuff, please don't use it or report bugs from it unless specifically asked for. The main branch is updated when I feel that it works well enough and has something worth to publish.
 
 ## Issues / Discussion
-Please try to post only issues relevant to the integration itself on the [Issues](https://github.com/JjyKsi/bmw-cardata-ha/issues) and keep all the outside discussion (problems with registration on BMWs side, asking for guidance, etc) in the discussions: [Discussions](https://github.com/JjyKsi/bmw-cardata-ha/discussions) It's not an end of the world if it's in the wrong place, but moving them around makes extra work for me which is away from the development. 
+Please post issues relevant to this integration on the fork's [Issues](https://github.com/JustChr/HABMW-CarData/issues) and keep outside discussion (problems with registration on BMW's side, asking for guidance, etc.) in [Discussions](https://github.com/JustChr/HABMW-CarData/discussions). It's not the end of the world if it's in the wrong place, but moving them around creates extra work.
 
 
 ## Release Notes: 
+#### 0.3.0 — Fork: rebrand, API conformance & security
+- **Rebranded** to **BMW CarData (HA)** with a new integration domain `bmw_cardata` (fresh installs use new entity IDs; original `cardata` installs should be removed and re-added — see `CLEAN_INSTALL_NOTES.md`). Original public-domain work by **JjyKsi** is credited in `NOTICE`.
+- **Added all remaining CarData API endpoints**: charging history, smart-maintenance tyre diagnosis, location-based charging settings, and the vehicle image — exposed as services and Configure-menu actions, all quota-aware.
+- **Security hardening**: the live `id_token` is no longer exposed as a diagnostics entity attribute; vehicle data (GPS/VIN) is no longer logged at INFO; **debug logging is now off by default**; OAuth requests have network timeouts and no longer echo token-bearing response bodies into errors.
+- **Packaging fix**: `paho-mqtt` is now declared in `requirements` (previously missing); added `issue_tracker` and `loggers` to the manifest.
+- Added unit tests + GitHub Actions (tests, hassfest, HACS validation) and an MIT `LICENSE`.
+
 #### 14.10.2025
 - Added device tracker entities per VIN, including dynamic creation when navigation coordinates appear and richer vehicle metadata exposure.
 - Improved reauthorization flow: configuration now asks for (and remembers) the client ID, surfaces BMW errors without crashing, and avoids transient “Missing GCID or ID token” retries.
@@ -32,7 +46,7 @@ In addition to the stream, we now also poll the API every 40 minutes. There is s
 
 ### Better names to entities and sensors
 Vehicles should now be named after their actual model. You can still see the VIN briefly in some situations
-Sensor friendly names are also revamped to be CarModel - SensorName. Sensor names are AI generated from the BMW catalogue. Please report or create a PR if you see something stupid. The sensor names are available in custom_components/cardata/descriptor_titles.py
+Sensor friendly names are also revamped to be CarModel - SensorName. Sensor names are AI generated from the BMW catalogue. Please report or create a PR if you see something stupid. The sensor names are available in custom_components/bmw_cardata/descriptor_titles.py
 
 ### More stable stream implementation
 Stream shouldn't reconnect every 70 seconds anymore. However, reconnection every 45 minutes is needed since BMW tokens are pretty shortlived. 
@@ -118,12 +132,12 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 ## Installation (HACS)
 
 1. Add this repo to HACS as a **custom repository** (type: Integration).
-2. Install "BimmerData Streamline" from the Custom section.
+2. Install "BMW CarData (HA)" from the Custom section.
 3. Restart Home Assistant.
 
 ## Configuration Flow
 
-1. Go to **Settings → Devices & Services → Add Integration** and pick **BimmerData Streamline**.
+1. Go to **Settings → Devices & Services → Add Integration** and pick **BMW CarData (HA)**.
 2. Enter your CarData **client ID** (created in the BMW portal).
 3. The flow displays a `verification_url` and `user_code`. Open the link, enter the code, and approve the device.
 4. Once the BMW portal confirms the approval, return to HA and click Submit. If you accidentally submit before finishing the BMW login, the flow will hang until the device-code exchange times out; cancel it and start over after completing the BMW login.
@@ -139,15 +153,21 @@ If BMW rejects the token (e.g. because the portal revoked it), please use the Co
 - Additional attributes include the source timestamp.
 
 ## Debug Logging
-Set `DEBUG_LOG = True` in `custom_components/cardata/const.py` for detailed MQTT/auth logs (enabled by default). To reduce noise, change it to `False` and reload HA.
+Debug logging is **off by default**. Enable it via **Configure → options** (the `debug_log` option) or by setting `DEBUG_LOG = True` in `custom_components/bmw_cardata/const.py`, then reload the integration. Debug logs are verbose and may contain vehicle data (including GPS coordinates and VIN), so keep them off unless troubleshooting.
 
 ## Developer Tools Services
 
 Home Assistant's Developer Tools expose helper services for manual API checks:
 
-- `cardata.fetch_telematic_data` fetches the current contents of the configured telematics container for a VIN and logs the raw payload.
-- `cardata.fetch_vehicle_mappings` calls `GET /customers/vehicles/mappings` and logs the mapping details (including PRIMARY or SECONDARY status). Only primary mappings return data; some vehicles do not support secondary users, in which case the mapped user is considered the primary one.
-- `cardata.fetch_basic_data` calls `GET /customers/vehicles/{vin}/basicData` to retrieve static metadata (model name, series, etc.) for the specified VIN.
+- `bmw_cardata.fetch_telematic_data` fetches the current contents of the configured telematics container for a VIN and logs the raw payload.
+- `bmw_cardata.fetch_vehicle_mappings` calls `GET /customers/vehicles/mappings` and logs the mapping details (including PRIMARY or SECONDARY status). Only primary mappings return data; some vehicles do not support secondary users, in which case the mapped user is considered the primary one.
+- `bmw_cardata.fetch_basic_data` calls `GET /customers/vehicles/{vin}/basicData` to retrieve static metadata (model name, series, etc.) for the specified VIN.
+- `bmw_cardata.fetch_charging_history` calls `GET /customers/vehicles/{vin}/chargingHistory` (paginated; optional `from`/`to`) and logs the charging sessions.
+- `bmw_cardata.fetch_tyre_diagnosis` calls `GET /customers/vehicles/{vin}/smartMaintenanceTyreDiagnosis`.
+- `bmw_cardata.fetch_location_charging_settings` calls `GET /customers/vehicles/{vin}/locationBasedChargingSettings` (paginated).
+- `bmw_cardata.fetch_vehicle_image` calls `GET /customers/vehicles/{vin}/image` and logs the image size/type.
+
+Every API service counts against the **50 requests / 24h** quota. They are also available as buttons under the integration's **Configure** menu.
 
 ## Requirements
 
@@ -164,4 +184,16 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 
 ## License
 
-This project is released into the public domain. Do whatever you want with it—personal, commercial, derivative works, etc. No attribution required (though appreciated).
+This fork is licensed under the [MIT License](LICENSE).
+
+The original project (`bmw-cardata-ha` / "BimmerData Streamline" by JjyKsi) was
+released into the public domain, which allows this derivative work to be
+relicensed. We credit the original author in [`NOTICE`](NOTICE) as a courtesy
+even though the original imposed no attribution requirement.
+
+### Trademarks & disclaimer
+
+"BMW", "Mini", "Rolls-Royce" and "CarData" are trademarks of their respective
+owners. This is an independent, community-built integration and is **not**
+affiliated with, endorsed by, or sponsored by BMW Group. Use at your own risk;
+see the warranty disclaimer in the LICENSE.
