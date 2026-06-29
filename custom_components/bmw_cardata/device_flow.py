@@ -12,15 +12,62 @@ from .const import DEVICE_CODE_URL, TOKEN_URL
 
 
 class CardataAuthError(Exception):
-    """Raised when the BMW OAuth service rejects a request."""
+    """Raised when the BMW OAuth service rejects a request.
+
+    Carries the structured pieces of the failure (HTTP status, OAuth ``error``
+    code, human description and a BMW correlation id when present) so the config
+    flow can render a useful details pane instead of an opaque one-liner.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: Optional[int] = None,
+        error_code: Optional[str] = None,
+        error_description: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.error_code = error_code
+        self.error_description = error_description
+        self.correlation_id = correlation_id
 
 
 # Network timeout for individual OAuth requests. A single poll/refresh must never
 # hang the event loop indefinitely.
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
+# Response headers BMW / its gateway use to tag a request for support tracing.
+# The first one present is surfaced so a user can quote it when contacting BMW.
+_CORRELATION_HEADERS = (
+    "x-correlation-id",
+    "x-correlationid",
+    "correlation-id",
+    "x-request-id",
+    "request-id",
+    "x-amzn-requestid",
+    "x-amzn-trace-id",
+)
 
-def _safe_error(status: int, data: Any) -> str:
+
+def _correlation_id(headers: Any) -> Optional[str]:
+    """Extract a BMW/gateway correlation id from response headers, if any."""
+
+    if not headers:
+        return None
+    for name in _CORRELATION_HEADERS:
+        try:
+            value = headers.get(name)
+        except AttributeError:
+            return None
+        if value:
+            return str(value)
+    return None
+
+
+def _safe_error(status: int, data: Any, *, headers: Any = None) -> str:
     """Build an error string without leaking tokens from the response body.
 
     Successful (200) responses carry access/refresh/id tokens. Only the OAuth
@@ -28,10 +75,33 @@ def _safe_error(status: int, data: Any) -> str:
     """
 
     if isinstance(data, dict):
-        detail = data.get("error_description") or data.get("error") or "unknown_error"
+        code = data.get("error")
+        description = data.get("error_description")
+        if code and description and description != code:
+            detail = f"{code}: {description}"
+        else:
+            detail = description or code or "unknown_error"
     else:
         detail = "non-JSON response"
-    return f"{status}: {detail}"
+    message = f"{status}: {detail}"
+    correlation = _correlation_id(headers)
+    if correlation:
+        message = f"{message} [ref: {correlation}]"
+    return message
+
+
+def _auth_error(status: int, data: Any, headers: Any = None) -> "CardataAuthError":
+    """Build a structured :class:`CardataAuthError` from an OAuth error response."""
+
+    code = data.get("error") if isinstance(data, dict) else None
+    description = data.get("error_description") if isinstance(data, dict) else None
+    return CardataAuthError(
+        f"Token polling failed ({_safe_error(status, data, headers=headers)})",
+        status=status,
+        error_code=code,
+        error_description=description,
+        correlation_id=_correlation_id(headers),
+    )
 
 
 async def request_device_code(
@@ -110,15 +180,11 @@ async def poll_for_tokens(
                 if resp.status >= 500 or resp.status == 429:
                     consecutive_transient += 1
                     if consecutive_transient > max_consecutive_transient:
-                        raise CardataAuthError(
-                            f"Token polling failed ({_safe_error(resp.status, data)})"
-                        )
+                        raise _auth_error(resp.status, data, resp.headers)
                     await asyncio.sleep(interval + 5)
                     continue
 
-                raise CardataAuthError(
-                    f"Token polling failed ({_safe_error(resp.status, data)})"
-                )
+                raise _auth_error(resp.status, data, resp.headers)
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             consecutive_transient += 1
             if consecutive_transient > max_consecutive_transient:

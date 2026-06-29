@@ -13,7 +13,7 @@
       },
       "authorize_failed": {
         "title": "Authorization didn't finish",
-        "description": "We couldn't complete the device authorization.\n\nReason: {error}\n\nThis usually means the approval timed out or was declined. Press **Submit** to get a fresh code and try again."
+        "description": "We couldn't complete the device authorization.\n\n**Details**\n```\n{error}\n```\n\n**What to check**\n- **declined / access_denied (403):** your Client ID must be subscribed to **both CarData API and CarData Streaming**, and the subscription + data selection must be finished **before** authorizing. You must also be the **primary** user for the vehicle.\n- **expired / timeout:** the code wasn't approved in time.\n\nFix the cause in the BMW portal, then press **Submit** to get a fresh code and try again. If it keeps failing, include the **Details** block above (and any **BMW reference**) in a bug report."
       }
     },
     "progress": {

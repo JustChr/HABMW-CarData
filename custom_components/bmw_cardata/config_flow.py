@@ -153,7 +153,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._token_data = self._poll_task.result()
         except CardataAuthError as err:
             LOGGER.warning("BMW authorization failed: %s", err)
-            self._auth_error = str(err)
+            self._auth_error = self._format_auth_error(err)
             self._poll_task = None
             return self.async_show_progress_done(next_step_id="authorize_failed")
 
@@ -165,6 +165,27 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         self._poll_task = None
         return self.async_show_progress_done(next_step_id="tokens")
+
+    def _format_auth_error(self, err: CardataAuthError) -> str:
+        """Render a multi-line details block for the authorize-failed screen.
+
+        Surfaces the raw OAuth pieces BMW returned so the user (or a bug report)
+        can see exactly what was rejected instead of a single opaque line.
+        """
+
+        lines = [str(err)]
+        if err.status is not None:
+            lines.append(f"- HTTP status: {err.status}")
+        if err.error_code:
+            lines.append(f"- Error code: {err.error_code}")
+        if err.error_description:
+            lines.append(f"- Description: {err.error_description}")
+        if err.correlation_id:
+            lines.append(f"- BMW reference: {err.correlation_id}")
+        # The scope is the usual culprit behind an `access_denied`, so always show
+        # what we asked BMW to grant.
+        lines.append(f"- Requested scope: {DEFAULT_SCOPE}")
+        return "\n".join(lines)
 
     async def async_step_authorize_failed(
         self, user_input: Optional[Dict[str, Any]] = None

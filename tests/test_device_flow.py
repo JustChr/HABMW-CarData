@@ -13,9 +13,10 @@ device_flow = load_module("device_flow")
 
 
 class _PollResponse:
-    def __init__(self, status: int, body: Any):
+    def __init__(self, status: int, body: Any, headers: dict | None = None):
         self.status = status
         self._body = body
+        self.headers = headers or {}
 
     async def __aenter__(self) -> "_PollResponse":
         return self
@@ -119,6 +120,32 @@ def test_poll_fatal_error_not_retried(monkeypatch):
     with pytest.raises(device_flow.CardataAuthError):
         asyncio.run(_poll(session))
     assert session.calls == 1
+
+
+def test_poll_error_carries_structured_detail(monkeypatch):
+    """A declined response exposes status/code/description/correlation for the UI."""
+
+    monkeypatch.setattr(device_flow.asyncio, "sleep", _no_sleep)
+    session = _PollSession(
+        [
+            _PollResponse(
+                403,
+                {
+                    "error": "access_denied",
+                    "error_description": "The user has declined authorization",
+                },
+                headers={"x-correlation-id": "abc-123"},
+            )
+        ]
+    )
+    with pytest.raises(device_flow.CardataAuthError) as excinfo:
+        asyncio.run(_poll(session))
+    err = excinfo.value
+    assert err.status == 403
+    assert err.error_code == "access_denied"
+    assert err.error_description == "The user has declined authorization"
+    assert err.correlation_id == "abc-123"
+    assert "abc-123" in str(err)
 
 
 async def _no_sleep(*_args, **_kwargs):
