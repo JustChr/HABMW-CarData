@@ -130,6 +130,18 @@ async def request_device_code(
         return payload
 
 
+# BMW notes that after the user approves the device it can take up to ~1 minute
+# for the access grant to actually propagate. During that window the token
+# endpoint transiently returns ``access_denied`` even though the user did NOT
+# decline. Keep polling through this grace window before treating access_denied
+# as a genuine decline.
+ACCESS_DENIED_GRACE = 120
+
+# Never poll the device-code endpoint faster than this, to avoid flooding BMW's
+# service even if the server-supplied interval is missing or too small.
+MIN_POLL_INTERVAL = 5
+
+
 async def poll_for_tokens(
     session: aiohttp.ClientSession,
     *,
@@ -150,6 +162,9 @@ async def poll_for_tokens(
         "code_verifier": code_verifier,
     }
 
+    # Respect BMW's recommended interval but never poll faster than the floor.
+    interval = max(int(interval), MIN_POLL_INTERVAL)
+
     # BMW's token backend intermittently returns 5xx (and occasionally 429) for a
     # few seconds right after the user approves the device, while it finalizes the
     # grant. Treat those as transient and keep polling within the timeout window
@@ -157,6 +172,8 @@ async def poll_for_tokens(
     # is handled the same way.
     consecutive_transient = 0
     max_consecutive_transient = 10
+    # Timestamp of the first access_denied seen; used to bound the grace window.
+    access_denied_since: Optional[float] = None
 
     while True:
         if time.monotonic() - start > timeout:
@@ -171,10 +188,26 @@ async def poll_for_tokens(
                 error = data.get("error") if isinstance(data, dict) else None
                 if error in {"authorization_pending", "slow_down"}:
                     consecutive_transient = 0
-                    await asyncio.sleep(
-                        interval if error == "authorization_pending" else interval + 5
-                    )
+                    access_denied_since = None
+                    # slow_down means BMW wants us to back off: raise the interval
+                    # permanently (per the OAuth device-flow spec) so we don't keep
+                    # hammering the endpoint.
+                    if error == "slow_down":
+                        interval += 5
+                    await asyncio.sleep(interval)
                     continue
+
+                # A just-approved grant can take up to ~1 minute to propagate, during
+                # which BMW reports access_denied even though the user approved. Keep
+                # polling through the grace window before surfacing it as a decline.
+                if error == "access_denied":
+                    now = time.monotonic()
+                    if access_denied_since is None:
+                        access_denied_since = now
+                    if now - access_denied_since <= ACCESS_DENIED_GRACE:
+                        await asyncio.sleep(interval)
+                        continue
+                    raise _auth_error(resp.status, data, resp.headers)
 
                 # Transient server-side failure: retry rather than fail the flow.
                 if resp.status >= 500 or resp.status == 429:

@@ -113,19 +113,41 @@ def test_poll_gives_up_after_persistent_500(monkeypatch):
 
 
 def test_poll_fatal_error_not_retried(monkeypatch):
-    """A 4xx auth error (e.g. access_denied) fails immediately."""
+    """A genuine terminal auth error (e.g. expired_token) fails immediately."""
 
     monkeypatch.setattr(device_flow.asyncio, "sleep", _no_sleep)
-    session = _PollSession([_PollResponse(400, {"error": "access_denied"})])
+    session = _PollSession([_PollResponse(400, {"error": "expired_token"})])
     with pytest.raises(device_flow.CardataAuthError):
         asyncio.run(_poll(session))
     assert session.calls == 1
 
 
-def test_poll_error_carries_structured_detail(monkeypatch):
-    """A declined response exposes status/code/description/correlation for the UI."""
+def test_poll_access_denied_within_grace_then_success(monkeypatch):
+    """A just-approved grant that briefly reports access_denied still succeeds.
+
+    BMW can take up to ~1 minute for the grant to propagate; access_denied during
+    that window must not abort the flow.
+    """
 
     monkeypatch.setattr(device_flow.asyncio, "sleep", _no_sleep)
+    session = _PollSession(
+        [
+            _PollResponse(403, {"error": "access_denied"}),
+            _PollResponse(403, {"error": "access_denied"}),
+            _PollResponse(200, {"access_token": "ok"}),
+        ]
+    )
+    result = asyncio.run(_poll(session))
+    assert result == {"access_token": "ok"}
+    assert session.calls == 3
+
+
+def test_poll_access_denied_persists_then_fails(monkeypatch):
+    """A real decline (past the grace window) surfaces structured detail for the UI."""
+
+    monkeypatch.setattr(device_flow.asyncio, "sleep", _no_sleep)
+    # Collapse the grace window so a persistent access_denied is terminal at once.
+    monkeypatch.setattr(device_flow, "ACCESS_DENIED_GRACE", -1)
     session = _PollSession(
         [
             _PollResponse(
@@ -146,6 +168,28 @@ def test_poll_error_carries_structured_detail(monkeypatch):
     assert err.error_description == "The user has declined authorization"
     assert err.correlation_id == "abc-123"
     assert "abc-123" in str(err)
+
+
+def test_poll_slow_down_raises_interval(monkeypatch):
+    """slow_down permanently increases the polling interval (don't flood BMW)."""
+
+    sleeps: list = []
+
+    async def _record_sleep(seconds, *_a, **_k):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(device_flow.asyncio, "sleep", _record_sleep)
+    session = _PollSession(
+        [
+            _PollResponse(400, {"error": "slow_down"}),
+            _PollResponse(400, {"error": "authorization_pending"}),
+            _PollResponse(200, {"access_token": "ok"}),
+        ]
+    )
+    result = asyncio.run(_poll(session))
+    assert result == {"access_token": "ok"}
+    # interval starts at the floor (5); slow_down bumps it to 10 for all later waits.
+    assert sleeps == [10, 10]
 
 
 async def _no_sleep(*_args, **_kwargs):
