@@ -80,23 +80,53 @@ async def poll_for_tokens(
         "code_verifier": code_verifier,
     }
 
+    # BMW's token backend intermittently returns 5xx (and occasionally 429) for a
+    # few seconds right after the user approves the device, while it finalizes the
+    # grant. Treat those as transient and keep polling within the timeout window
+    # instead of aborting the whole flow. A network hiccup raising during the POST
+    # is handled the same way.
+    consecutive_transient = 0
+    max_consecutive_transient = 10
+
     while True:
         if time.monotonic() - start > timeout:
             raise CardataAuthError("Timed out waiting for device authorization")
 
-        async with session.post(token_url, data=payload, timeout=HTTP_TIMEOUT) as resp:
-            data = await resp.json(content_type=None)
-            if resp.status == 200:
-                return data
+        try:
+            async with session.post(token_url, data=payload, timeout=HTTP_TIMEOUT) as resp:
+                data = await resp.json(content_type=None)
+                if resp.status == 200:
+                    return data
 
-            error = data.get("error") if isinstance(data, dict) else None
-            if error in {"authorization_pending", "slow_down"}:
-                await asyncio.sleep(interval if error == "authorization_pending" else interval + 5)
-                continue
+                error = data.get("error") if isinstance(data, dict) else None
+                if error in {"authorization_pending", "slow_down"}:
+                    consecutive_transient = 0
+                    await asyncio.sleep(
+                        interval if error == "authorization_pending" else interval + 5
+                    )
+                    continue
 
-            raise CardataAuthError(
-                f"Token polling failed ({_safe_error(resp.status, data)})"
-            )
+                # Transient server-side failure: retry rather than fail the flow.
+                if resp.status >= 500 or resp.status == 429:
+                    consecutive_transient += 1
+                    if consecutive_transient > max_consecutive_transient:
+                        raise CardataAuthError(
+                            f"Token polling failed ({_safe_error(resp.status, data)})"
+                        )
+                    await asyncio.sleep(interval + 5)
+                    continue
+
+                raise CardataAuthError(
+                    f"Token polling failed ({_safe_error(resp.status, data)})"
+                )
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            consecutive_transient += 1
+            if consecutive_transient > max_consecutive_transient:
+                raise CardataAuthError(
+                    f"Token polling failed (network error: {err})"
+                ) from err
+            await asyncio.sleep(interval + 5)
+            continue
 
 
 async def refresh_tokens(
